@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
 
-    // START VIDEO GENERATION
+    // --- INICIAR GERAÇÃO DE VÍDEO ---
     const operation = await client.models.generateVideos({
       model: "veo-3.0-generate-001",
       prompt,
@@ -42,15 +42,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ---- POLLING USANDO API ANTIGA ----
-    let result = await client.operations.get(opName);
-
+    // --- POLLING USANDO OPERATIONS.GETVIDEOOPERATION (API NOVA) ---
     let tries = 0;
-    const maxTries = 60;
+    const maxTries = 60; // 60 * 5s = 5 minutos
+
+    // a tipagem nova geralmente usa um objeto com { name: string }
+    // mas o erro anterior era justamente porque passava a prop errada.
+    let result = await client.operations.getVideosOperation({ name: opName });
 
     while (!result.done && tries < maxTries) {
       await new Promise((r) => setTimeout(r, 5000));
-      result = await client.operations.get(opName);
+      result = await client.operations.getVideosOperation({ name: opName });
       tries++;
     }
 
@@ -68,7 +70,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // FORMATO ANTIGO DO SDK:
+    // SDK novo costuma devolver algo como:
+    // result.response.generatedVideos[0].video.uri
     const videoUri =
       result.response?.generatedVideos?.[0]?.video?.uri ?? null;
 
