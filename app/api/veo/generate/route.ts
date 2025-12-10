@@ -7,19 +7,23 @@ if (!process.env.GEMINI_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Função auxiliar porque NEXT NÃO tem "File", só Blob
-function isBlob(value: FormDataEntryValue | null): value is Blob {
+type ImagePayload = {
+  imageBytes: string;
+  mimeType: string;
+};
+
+// Type guard: checa se é um "File" sem usar `instanceof File`
+function isFileLike(value: FormDataEntryValue | null): value is File {
   return (
     typeof value === "object" &&
     value !== null &&
-    "arrayBuffer" in value &&
-    typeof (value as Blob).arrayBuffer === "function"
+    "arrayBuffer" in value
   );
 }
 
 export async function POST(req: Request) {
   try {
-    const contentType = req.headers.get("content-type") || "";
+    const contentType = req.headers.get("content-type") ?? "";
 
     if (!contentType.includes("multipart/form-data")) {
       return NextResponse.json(
@@ -30,58 +34,85 @@ export async function POST(req: Request) {
 
     const form = await req.formData();
 
-    const prompt = (form.get("prompt") as string) || "";
-    const model = (form.get("model") as string) || "veo-3.0-generate-001";
+    const promptValue = form.get("prompt");
+    const modelValue = form.get("model");
+    const negativePromptValue = form.get("negativePrompt");
+    const aspectRatioValue = form.get("aspectRatio");
+    const imageFileValue = form.get("imageFile");
+    const imageBase64Value = form.get("imageBase64");
+    const imageMimeTypeValue = form.get("imageMimeType");
 
-    // 🔥 Sempre remove texto / legendas:
-    let negativePromptBase =
-      "no subtitles, no captions, no text, no words, no writing, no on-screen text, no text overlay";
+    const prompt = typeof promptValue === "string" ? promptValue : "";
 
-    const negativePromptUser = form.get("negativePrompt") as string | null;
-    const negativePrompt = negativePromptUser
-      ? `${negativePromptBase}, ${negativePromptUser}`
-      : negativePromptBase;
+    const model =
+      typeof modelValue === "string" && modelValue.length > 0
+        ? modelValue
+        : "veo-3.0-generate-001";
 
-    const aspectRatio = (form.get("aspectRatio") as string) || undefined;
+    const negativePrompt =
+      typeof negativePromptValue === "string" &&
+      negativePromptValue.length > 0
+        ? negativePromptValue
+        : undefined;
 
-    const imageFile = form.get("imageFile");
-    const imageBase64 = (form.get("imageBase64") as string) || undefined;
-    const imageMimeType = (form.get("imageMimeType") as string) || undefined;
+    const aspectRatio =
+      typeof aspectRatioValue === "string" && aspectRatioValue.length > 0
+        ? aspectRatioValue
+        : undefined;
+
+    const imageBase64 =
+      typeof imageBase64Value === "string" &&
+      imageBase64Value.length > 0
+        ? imageBase64Value
+        : undefined;
+
+    const imageMimeType =
+      typeof imageMimeTypeValue === "string" &&
+      imageMimeTypeValue.length > 0
+        ? imageMimeTypeValue
+        : undefined;
 
     if (!prompt) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
 
-    let image: { imageBytes: string; mimeType: string } | undefined;
+    let image: ImagePayload | undefined;
 
-    // Upload de imagem vindo via File/Blob
-    if (isBlob(imageFile)) {
-      const buf = Buffer.from(await imageFile.arrayBuffer());
-      image = { imageBytes: buf.toString("base64"), mimeType: imageFile.type || "image/png" };
-    }
-    // Imagem enviada via base64 string
-    else if (imageBase64) {
+    // Upload de imagem (sem `instanceof File`)
+    if (isFileLike(imageFileValue)) {
+      const buf = await imageFileValue.arrayBuffer();
+      const b64 = Buffer.from(buf).toString("base64");
+
+      image = {
+        imageBytes: b64,
+        mimeType: imageFileValue.type || "image/png",
+      };
+    } else if (imageBase64) {
       const cleaned = imageBase64.includes(",")
-        ? imageBase64.split(",")[1]
+        ? imageBase64.split(",")[1]!
         : imageBase64;
-      image = { imageBytes: cleaned, mimeType: imageMimeType || "image/png" };
+
+      image = {
+        imageBytes: cleaned,
+        mimeType: imageMimeType || "image/png",
+      };
     }
 
-    // 🔥 Chamada da API VEO
     const operation = await ai.models.generateVideos({
       model,
       prompt,
       ...(image ? { image } : {}),
       config: {
-        negativePrompt,
-        ...(aspectRatio ? { aspectRatio } : {})
-      }
+        ...(aspectRatio ? { aspectRatio } : {}),
+        ...(negativePrompt ? { negativePrompt } : {}),
+      },
     });
 
-    const name = (operation as unknown as { name?: string }).name;
+    const opNameField = (operation as { name?: unknown }).name;
+    const name = typeof opNameField === "string" ? opNameField : undefined;
 
     return NextResponse.json({ name });
-  } catch (error: unknown) {
+  } catch (error) {
     console.error("Error starting Veo generation:", error);
     return NextResponse.json(
       { error: "Failed to start generation" },
