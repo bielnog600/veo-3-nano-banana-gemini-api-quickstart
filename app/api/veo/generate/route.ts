@@ -30,17 +30,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // START VIDEO GENERATION
+    // INICIAR GERAÇÃO DO VÍDEO
     const operation = await client.models.generateVideos({
       model: "veo-3.0-generate-001",
       prompt,
       config: {
-        aspectRatio: "9:16", // formato story
+        aspectRatio: "9:16", // Formato story
         ...(duration ? { duration } : {})
       }
     });
 
     const opName = operation?.name;
+
     if (!opName) {
       return NextResponse.json(
         { error: "Operation did not return a name" },
@@ -48,15 +49,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // POLLING — AGORA COM O FORMATO CORRETO
-    let result = await client.operations.getVideosOperation({ name: opName });
+    // 🔥 POLLING — FORMATO CORRETO DO SDK → { operation: string }
+    let result = await client.operations.getVideosOperation({
+      operation: opName
+    });
 
     let tries = 0;
-    const max = 60; // 5 min
+    const max = 60; // 5 minutos
 
     while (!result.done && tries < max) {
-      await new Promise((r) => setTimeout(r, 5000));
-      result = await client.operations.getVideosOperation({ name: opName });
+      await new Promise((r) => setTimeout(r, 5000)); // 5s
+      result = await client.operations.getVideosOperation({
+        operation: opName
+      });
       tries++;
     }
 
@@ -69,9 +74,7 @@ export async function POST(req: NextRequest) {
 
     if (result.error) {
       return NextResponse.json(
-        {
-          error: result.error.message ?? "Unknown generation error",
-        },
+        { error: result.error.message ?? "Unknown generation error" },
         { status: 500 }
       );
     }
@@ -90,9 +93,6 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("VEO API ERROR:", message);
-    return NextResponse.json(
-      { error: message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
