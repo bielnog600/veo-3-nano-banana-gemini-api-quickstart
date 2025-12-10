@@ -11,12 +11,17 @@ const client = new GoogleGenAI({ apiKey });
 
 export const runtime = "nodejs";
 
+type GenerateRequestBody = {
+  prompt?: string;
+  duration?: number;
+};
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = (await req.json()) as GenerateRequestBody;
 
-    const prompt: string | undefined = body?.prompt;
-    const duration: number | undefined = body?.duration;
+    const prompt = body.prompt;
+    const duration = body.duration;
 
     if (!prompt) {
       return NextResponse.json(
@@ -29,8 +34,7 @@ export async function POST(req: NextRequest) {
       model: "veo-3.0-generate-001",
       prompt,
       config: {
-        aspectRatio: "9:16",
-        motion: "cinematic",
+        aspectRatio: "9:16", // formato story
         frameRate: 30,
         ...(duration ? { duration } : {}),
       },
@@ -48,10 +52,12 @@ export async function POST(req: NextRequest) {
     let result = await client.operations.getVideosOperation({ operation: opName });
 
     let attempts = 0;
-    while (!result.done && attempts < 60) {
+    const maxAttempts = 60; // ~5 minutos se 5s cada
+
+    while (!result.done && attempts < maxAttempts) {
       await new Promise((res) => setTimeout(res, 5000));
       result = await client.operations.getVideosOperation({ operation: opName });
-      attempts++;
+      attempts += 1;
     }
 
     if (!result.done) {
@@ -79,11 +85,11 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ uri: videoUri });
-  } catch (e) {
-    const err = e instanceof Error ? e.message : "Unknown error";
-    console.error("VEO API ERROR:", err);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    console.error("VEO API ERROR:", message);
     return NextResponse.json(
-      { error: err },
+      { error: message },
       { status: 500 }
     );
   }
