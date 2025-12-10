@@ -35,10 +35,17 @@ export async function POST(req: Request) {
 
     let image: { imageBytes: string; mimeType: string } | undefined;
 
-    if (imageFile && imageFile instanceof File) {
-      const buf = await imageFile.arrayBuffer();
+    // ✅ Corrigido: não usa mais "instanceof File" (que não existe no Node)
+    if (imageFile && typeof (imageFile as any).arrayBuffer === "function") {
+      const buf = await (imageFile as any).arrayBuffer();
       const b64 = Buffer.from(buf).toString("base64");
-      image = { imageBytes: b64, mimeType: imageFile.type || "image/png" };
+
+      const mimeType =
+        (imageFile as any).type && typeof (imageFile as any).type === "string"
+          ? (imageFile as any).type
+          : "image/png";
+
+      image = { imageBytes: b64, mimeType };
     } else if (imageBase64) {
       const cleaned = imageBase64.includes(",")
         ? imageBase64.split(",")[1]
