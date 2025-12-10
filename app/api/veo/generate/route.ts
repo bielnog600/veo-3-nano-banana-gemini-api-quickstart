@@ -12,9 +12,17 @@ type ImagePayload = {
   mimeType: string;
 };
 
+function isFileLike(value: FormDataEntryValue | null): value is Blob {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "arrayBuffer" in value
+  );
+}
+
 export async function POST(req: Request) {
   try {
-    const contentType = req.headers.get("content-type") || "";
+    const contentType = req.headers.get("content-type") ?? "";
 
     if (!contentType.includes("multipart/form-data")) {
       return NextResponse.json(
@@ -25,16 +33,43 @@ export async function POST(req: Request) {
 
     const form = await req.formData();
 
-    const prompt = (form.get("prompt") as string) || "";
-    const model = (form.get("model") as string) || "veo-3.0-generate-001";
-    const negativePrompt =
-      (form.get("negativePrompt") as string) || undefined;
-    const aspectRatio = (form.get("aspectRatio") as string) || undefined;
+    const promptValue = form.get("prompt");
+    const modelValue = form.get("model");
+    const negativePromptValue = form.get("negativePrompt");
+    const aspectRatioValue = form.get("aspectRatio");
+    const imageFileValue = form.get("imageFile");
+    const imageBase64Value = form.get("imageBase64");
+    const imageMimeTypeValue = form.get("imageMimeType");
 
-    const imageFile = form.get("imageFile");
-    const imageBase64 = (form.get("imageBase64") as string) || undefined;
+    const prompt = typeof promptValue === "string" ? promptValue : "";
+
+    const model =
+      typeof modelValue === "string" && modelValue.length > 0
+        ? modelValue
+        : "veo-3.0-generate-001";
+
+    const negativePrompt =
+      typeof negativePromptValue === "string" &&
+      negativePromptValue.length > 0
+        ? negativePromptValue
+        : undefined;
+
+    const aspectRatio =
+      typeof aspectRatioValue === "string" && aspectRatioValue.length > 0
+        ? aspectRatioValue
+        : undefined;
+
+    const imageBase64 =
+      typeof imageBase64Value === "string" &&
+      imageBase64Value.length > 0
+        ? imageBase64Value
+        : undefined;
+
     const imageMimeType =
-      (form.get("imageMimeType") as string) || undefined;
+      typeof imageMimeTypeValue === "string" &&
+      imageMimeTypeValue.length > 0
+        ? imageMimeTypeValue
+        : undefined;
 
     if (!prompt) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
@@ -42,25 +77,18 @@ export async function POST(req: Request) {
 
     let image: ImagePayload | undefined;
 
-    // ✅ Sem "File" no runtime e sem "any"
-    if (
-      imageFile &&
-      typeof (imageFile as Blob).arrayBuffer === "function"
-    ) {
-      const fileBlob = imageFile as Blob;
-      const buf = await fileBlob.arrayBuffer();
+    // Tratamento do upload de imagem (sem usar `File` nem `any`)
+    if (isFileLike(imageFileValue)) {
+      const buf = await imageFileValue.arrayBuffer();
       const b64 = Buffer.from(buf).toString("base64");
 
-      const withType = imageFile as { type?: string };
-      const mimeType =
-        typeof withType.type === "string" && withType.type
-          ? withType.type
-          : "image/png";
-
-      image = { imageBytes: b64, mimeType };
+      image = {
+        imageBytes: b64,
+        mimeType: imageFileValue.type || "image/png",
+      };
     } else if (imageBase64) {
       const cleaned = imageBase64.includes(",")
-        ? imageBase64.split(",")[1]
+        ? imageBase64.split(",")[1]!
         : imageBase64;
 
       image = {
@@ -79,13 +107,15 @@ export async function POST(req: Request) {
       },
     });
 
-    const name = (operation as unknown as { name?: string }).name;
-    return NextResponse.json({ name });
-  } catch (error: unknown) {
-    console.error("Error starting Veo generation:", error);
-    const message =
-      error instanceof Error ? error.message : "Failed to start generation";
+    const opNameField = (operation as { name?: unknown }).name;
+    const name = typeof opNameField === "string" ? opNameField : undefined;
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ name });
+  } catch (error) {
+    console.error("Error starting Veo generation:", error);
+    return NextResponse.json(
+      { error: "Failed to start generation" },
+      { status: 500 }
+    );
   }
 }
