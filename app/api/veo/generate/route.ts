@@ -35,7 +35,6 @@ export async function POST(req: NextRequest) {
       prompt,
       config: {
         aspectRatio: "9:16", // formato story
-        frameRate: 30,
         ...(duration ? { duration } : {}),
       },
     });
@@ -48,7 +47,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Polling da operação
+    // Poll da operação até terminar
     let result = await client.operations.getVideosOperation({ operation: opName });
 
     let attempts = 0;
