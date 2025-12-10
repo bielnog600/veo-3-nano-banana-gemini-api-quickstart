@@ -12,7 +12,8 @@ type ImagePayload = {
   mimeType: string;
 };
 
-function isFileLike(value: FormDataEntryValue | null): value is Blob {
+// Type guard: checa se é um "File" sem usar `instanceof File`
+function isFileLike(value: FormDataEntryValue | null): value is File {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -77,7 +78,7 @@ export async function POST(req: Request) {
 
     let image: ImagePayload | undefined;
 
-    // Tratamento do upload de imagem (sem usar `File` nem `any`)
+    // Upload de imagem (sem `instanceof File`)
     if (isFileLike(imageFileValue)) {
       const buf = await imageFileValue.arrayBuffer();
       const b64 = Buffer.from(buf).toString("base64");
