@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       model: "veo-3.0-generate-001",
       prompt,
       config: {
-        aspectRatio: "9:16", // formato story
+        aspectRatio: "9:16",
         ...(duration ? { duration } : {})
       }
     });
@@ -42,15 +42,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // POLLING CORRETO DO SDK
-    let result = await client.operations.getVideosOperation({ name: opName });
+    // ---- POLLING USANDO API ANTIGA ----
+    let result = await client.operations.get(opName);
 
     let tries = 0;
-    const maxTries = 60; // 5 minutos
+    const maxTries = 60;
 
     while (!result.done && tries < maxTries) {
       await new Promise((r) => setTimeout(r, 5000));
-      result = await client.operations.getVideosOperation({ name: opName });
+      result = await client.operations.get(opName);
       tries++;
     }
 
@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // FORMATO ANTIGO DO SDK:
     const videoUri =
       result.response?.generatedVideos?.[0]?.video?.uri ?? null;
 
