@@ -5,15 +5,13 @@ if (!process.env.GEMINI_API_KEY) {
   throw new Error("GEMINI_API_KEY environment variable is not set.");
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+});
 
-function isBlobLike(value: FormDataEntryValue | null): value is Blob {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "arrayBuffer" in value &&
-    typeof (value as Blob).arrayBuffer === "function"
-  );
+// ✅ Type predicate válido: File é subtipo de FormDataEntryValue
+function isFileValue(value: FormDataEntryValue | null): value is File {
+  return typeof value === "object" && value instanceof File;
 }
 
 export async function POST(req: Request) {
@@ -30,49 +28,62 @@ export async function POST(req: Request) {
     const form = await req.formData();
 
     const userPrompt = (form.get("prompt") as string) || "";
-    const model = (form.get("model") as string) || "veo-3.0-generate-001";
+    const model =
+      (form.get("model") as string) || "veo-3.0-nano-001"; // ou o modelo que você estiver usando
 
-    const duration = form.get("duration")
-      ? Number(form.get("duration"))
-      : undefined;
+    const durationStr = form.get("duration") as string | null;
+    const duration = durationStr ? Number(durationStr) : undefined;
 
-    const imageFile = form.get("imageFile");
-    const imageBase64 = (form.get("imageBase64") as string) || undefined;
+    const imageFileValue = form.get("imageFile");
+    const imageBase64 = (form.get("imageBase64") as string) || "";
     const imageMimeType =
       (form.get("imageMimeType") as string) || "image/png";
 
     if (!userPrompt) {
-      return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing prompt" },
+        { status: 400 }
+      );
     }
 
-    let image: { imageBytes: string; mimeType: string } | undefined;
+    let image:
+      | {
+          imageBytes: string;
+          mimeType: string;
+        }
+      | undefined;
 
-    if (isBlobLike(imageFile)) {
-      const buf = Buffer.from(await imageFile.arrayBuffer());
+    // ✅ Se veio arquivo via formData (File)
+    if (isFileValue(imageFileValue)) {
+      const buffer = Buffer.from(await imageFileValue.arrayBuffer());
       image = {
-        imageBytes: buf.toString("base64"),
-        mimeType: imageFile.type || "image/png",
+        imageBytes: buffer.toString("base64"),
+        mimeType: imageFileValue.type || "image/png",
       };
-    } else if (imageBase64) {
+    }
+    // ✅ Se veio base64 direto (por exemplo, da tua UI)
+    else if (imageBase64) {
       const cleaned = imageBase64.includes(",")
         ? imageBase64.split(",")[1]
         : imageBase64;
 
-      image = { imageBytes: cleaned, mimeType: imageMimeType };
+      image = {
+        imageBytes: cleaned,
+        mimeType: imageMimeType,
+      };
     }
 
-    // 🔥 Prompt otimizado: vertical + sem texto + qualidade alta
-    const prompt = `
-      Gere um vídeo em alta qualidade no formato 9:16 (story), estilo cinematográfico.
-      Não coloque NENHUM texto ou legenda na tela.
-      Imagem mais nítida possível, iluminação profissional, detalhes realistas.
-      Movimento suave, estilo cinemático.
-      Cena: ${userPrompt}
-    `;
+    // 🔥 Prompt forçando: 9:16, sem texto, alta qualidade
+    const finalPrompt = `
+Gere um vídeo em ALTA QUALIDADE, no formato vertical 9:16 (story).
+NÃO coloque nenhum texto, palavra, legenda ou escrita na tela.
+Estilo cinematográfico, movimento suave, boa iluminação e muitos detalhes.
+Cena: ${userPrompt}
+`.trim();
 
     const operation = await ai.models.generateVideos({
       model,
-      prompt,
+      prompt: finalPrompt,
       ...(image ? { image } : {}),
       config: {
         aspectRatio: "9:16",
