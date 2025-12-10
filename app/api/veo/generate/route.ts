@@ -7,6 +7,11 @@ if (!process.env.GEMINI_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+type ImagePayload = {
+  imageBytes: string;
+  mimeType: string;
+};
+
 export async function POST(req: Request) {
   try {
     const contentType = req.headers.get("content-type") || "";
@@ -22,27 +27,34 @@ export async function POST(req: Request) {
 
     const prompt = (form.get("prompt") as string) || "";
     const model = (form.get("model") as string) || "veo-3.0-generate-001";
-    const negativePrompt = (form.get("negativePrompt") as string) || undefined;
+    const negativePrompt =
+      (form.get("negativePrompt") as string) || undefined;
     const aspectRatio = (form.get("aspectRatio") as string) || undefined;
 
     const imageFile = form.get("imageFile");
     const imageBase64 = (form.get("imageBase64") as string) || undefined;
-    const imageMimeType = (form.get("imageMimeType") as string) || undefined;
+    const imageMimeType =
+      (form.get("imageMimeType") as string) || undefined;
 
     if (!prompt) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
 
-    let image: { imageBytes: string; mimeType: string } | undefined;
+    let image: ImagePayload | undefined;
 
-    // ✅ Corrigido: não usa mais "instanceof File" (que não existe no Node)
-    if (imageFile && typeof (imageFile as any).arrayBuffer === "function") {
-      const buf = await (imageFile as any).arrayBuffer();
+    // ✅ Sem "File" no runtime e sem "any"
+    if (
+      imageFile &&
+      typeof (imageFile as Blob).arrayBuffer === "function"
+    ) {
+      const fileBlob = imageFile as Blob;
+      const buf = await fileBlob.arrayBuffer();
       const b64 = Buffer.from(buf).toString("base64");
 
+      const withType = imageFile as { type?: string };
       const mimeType =
-        (imageFile as any).type && typeof (imageFile as any).type === "string"
-          ? (imageFile as any).type
+        typeof withType.type === "string" && withType.type
+          ? withType.type
           : "image/png";
 
       image = { imageBytes: b64, mimeType };
@@ -50,7 +62,11 @@ export async function POST(req: Request) {
       const cleaned = imageBase64.includes(",")
         ? imageBase64.split(",")[1]
         : imageBase64;
-      image = { imageBytes: cleaned, mimeType: imageMimeType || "image/png" };
+
+      image = {
+        imageBytes: cleaned,
+        mimeType: imageMimeType || "image/png",
+      };
     }
 
     const operation = await ai.models.generateVideos({
@@ -67,9 +83,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ name });
   } catch (error: unknown) {
     console.error("Error starting Veo generation:", error);
-    return NextResponse.json(
-      { error: "Failed to start generation" },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error ? error.message : "Failed to start generation";
+
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
