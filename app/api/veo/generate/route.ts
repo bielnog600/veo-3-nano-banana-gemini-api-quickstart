@@ -7,8 +7,7 @@ if (!process.env.GEMINI_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Função auxiliar porque NEXT NÃO tem "File", só Blob
-function isBlob(value: FormDataEntryValue | null): value is Blob {
+function isBlobLike(value: FormDataEntryValue | null): value is Blob {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -30,58 +29,65 @@ export async function POST(req: Request) {
 
     const form = await req.formData();
 
-    const prompt = (form.get("prompt") as string) || "";
+    const userPrompt = (form.get("prompt") as string) || "";
     const model = (form.get("model") as string) || "veo-3.0-generate-001";
 
-    // 🔥 Sempre remove texto / legendas:
-    let negativePromptBase =
-      "no subtitles, no captions, no text, no words, no writing, no on-screen text, no text overlay";
-
-    const negativePromptUser = form.get("negativePrompt") as string | null;
-    const negativePrompt = negativePromptUser
-      ? `${negativePromptBase}, ${negativePromptUser}`
-      : negativePromptBase;
-
-    const aspectRatio = (form.get("aspectRatio") as string) || undefined;
+    const duration = form.get("duration")
+      ? Number(form.get("duration"))
+      : undefined;
 
     const imageFile = form.get("imageFile");
     const imageBase64 = (form.get("imageBase64") as string) || undefined;
-    const imageMimeType = (form.get("imageMimeType") as string) || undefined;
+    const imageMimeType =
+      (form.get("imageMimeType") as string) || "image/png";
 
-    if (!prompt) {
+    if (!userPrompt) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
 
     let image: { imageBytes: string; mimeType: string } | undefined;
 
-    // Upload de imagem vindo via File/Blob
-    if (isBlob(imageFile)) {
+    if (isBlobLike(imageFile)) {
       const buf = Buffer.from(await imageFile.arrayBuffer());
-      image = { imageBytes: buf.toString("base64"), mimeType: imageFile.type || "image/png" };
-    }
-    // Imagem enviada via base64 string
-    else if (imageBase64) {
+      image = {
+        imageBytes: buf.toString("base64"),
+        mimeType: imageFile.type || "image/png",
+      };
+    } else if (imageBase64) {
       const cleaned = imageBase64.includes(",")
         ? imageBase64.split(",")[1]
         : imageBase64;
-      image = { imageBytes: cleaned, mimeType: imageMimeType || "image/png" };
+
+      image = { imageBytes: cleaned, mimeType: imageMimeType };
     }
 
-    // 🔥 Chamada da API VEO
+    // 🔥 Prompt otimizado: vertical + sem texto + qualidade alta
+    const prompt = `
+      Gere um vídeo em alta qualidade no formato 9:16 (story), estilo cinematográfico.
+      Não coloque NENHUM texto ou legenda na tela.
+      Imagem mais nítida possível, iluminação profissional, detalhes realistas.
+      Movimento suave, estilo cinemático.
+      Cena: ${userPrompt}
+    `;
+
     const operation = await ai.models.generateVideos({
       model,
       prompt,
       ...(image ? { image } : {}),
       config: {
-        negativePrompt,
-        ...(aspectRatio ? { aspectRatio } : {})
-      }
+        aspectRatio: "9:16",
+        quality: "high",
+        detail: "high",
+        motion: "cinematic",
+        frameRate: 30,
+        ...(duration ? { duration } : {}),
+      },
     });
 
     const name = (operation as unknown as { name?: string }).name;
 
     return NextResponse.json({ name });
-  } catch (error: unknown) {
+  } catch (error) {
     console.error("Error starting Veo generation:", error);
     return NextResponse.json(
       { error: "Failed to start generation" },
