@@ -9,84 +9,81 @@ if (!apiKey) {
 
 const client = new GoogleGenAI({ apiKey });
 
-export const runtime = "nodejs"; // ou "edge", se o projeto original usar edge
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+
     const prompt: string | undefined = body?.prompt;
     const duration: number | undefined = body?.duration;
 
-    if (!prompt || typeof prompt !== "string") {
+    if (!prompt) {
       return NextResponse.json(
-        { error: "Missing or invalid 'prompt' in request body." },
+        { error: "Missing prompt" },
         { status: 400 }
       );
     }
 
-    // Chamada ao Veo / geração de vídeo
     const operation = await client.models.generateVideos({
-      model: "veo-2.0-generate-001", // ou o modelo que estás a usar
+      model: "veo-3.0-generate-001",
       prompt,
       config: {
         aspectRatio: "9:16",
-        // ❌ REMOVIDO: quality
-        // ❌ REMOVIDO: detail
-        // Estes abaixo são aceites no teu tipo GenerateVideosConfig
         motion: "cinematic",
         frameRate: 30,
         ...(duration ? { duration } : {}),
       },
     });
 
-    if (!operation.name) {
+    const opName = operation?.name;
+    if (!opName) {
       return NextResponse.json(
-        { error: "Video generation operation did not return a name." },
+        { error: "Operation did not return a name" },
         { status: 500 }
       );
     }
 
-    // Polling simples até terminar a operação
-    let doneOp = operation;
+    // Polling da operação
+    let result = await client.operations.getVideosOperation({ operation: opName });
 
-    // Limite básico para não ficar em loop infinito
-    for (let i = 0; i < 60 && !doneOp.done; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      doneOp = await client.operations.getVideosOperation({
-        operation: operation.name,
-      });
+    let attempts = 0;
+    while (!result.done && attempts < 60) {
+      await new Promise((res) => setTimeout(res, 5000));
+      result = await client.operations.getVideosOperation({ operation: opName });
+      attempts++;
     }
 
-    if (!doneOp.done) {
+    if (!result.done) {
       return NextResponse.json(
-        { error: "Video generation did not complete in time." },
+        { error: "Video generation timeout" },
         { status: 504 }
       );
     }
 
-    if (doneOp.error) {
+    if (result.error) {
       return NextResponse.json(
-        { error: doneOp.error.message ?? "Unknown error from Veo" },
+        { error: result.error.message ?? "Unknown error" },
         { status: 500 }
       );
     }
 
     const videoUri =
-      doneOp.response?.generatedVideos?.[0]?.video?.uri ?? null;
+      result.response?.generatedVideos?.[0]?.video?.uri ?? null;
 
     if (!videoUri) {
       return NextResponse.json(
-        { error: "Generated video URI not found in response." },
+        { error: "No video URI returned" },
         { status: 500 }
       );
     }
 
-    // Devolve só o URI do vídeo (podes adaptar para devolver mais coisas)
     return NextResponse.json({ uri: videoUri });
-  } catch (err: any) {
-    console.error("Error in /api/veo/generate:", err);
+  } catch (e) {
+    const err = e instanceof Error ? e.message : "Unknown error";
+    console.error("VEO API ERROR:", err);
     return NextResponse.json(
-      { error: err?.message ?? "Internal server error." },
+      { error: err },
       { status: 500 }
     );
   }
