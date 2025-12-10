@@ -1,92 +1,91 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
-export const runtime = "nodejs";
+if (!process.env.GEMINI_API_KEY) {
+  throw new Error("GEMINI_API_KEY environment variable is not set.");
+}
 
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-const client = new GoogleGenAI({ apiKey });
+// Função auxiliar porque NEXT NÃO tem "File", só Blob
+function isBlob(value: FormDataEntryValue | null): value is Blob {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "arrayBuffer" in value &&
+    typeof (value as Blob).arrayBuffer === "function"
+  );
+}
 
-type GenerateRequestBody = {
-  prompt?: string;
-  duration?: number;
-};
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as GenerateRequestBody;
+    const contentType = req.headers.get("content-type") || "";
 
-    const prompt = body.prompt;
-    const duration = body.duration;
+    if (!contentType.includes("multipart/form-data")) {
+      return NextResponse.json(
+        { error: "Expected multipart/form-data" },
+        { status: 400 }
+      );
+    }
+
+    const form = await req.formData();
+
+    const prompt = (form.get("prompt") as string) || "";
+    const model = (form.get("model") as string) || "veo-3.0-generate-001";
+
+    // 🔥 Sempre remove texto / legendas:
+    let negativePromptBase =
+      "no subtitles, no captions, no text, no words, no writing, no on-screen text, no text overlay";
+
+    const negativePromptUser = form.get("negativePrompt") as string | null;
+    const negativePrompt = negativePromptUser
+      ? `${negativePromptBase}, ${negativePromptUser}`
+      : negativePromptBase;
+
+    const aspectRatio = (form.get("aspectRatio") as string) || undefined;
+
+    const imageFile = form.get("imageFile");
+    const imageBase64 = (form.get("imageBase64") as string) || undefined;
+    const imageMimeType = (form.get("imageMimeType") as string) || undefined;
 
     if (!prompt) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
 
-    // --- INICIAR GERAÇÃO DE VÍDEO ---
-    const operation = await client.models.generateVideos({
-      model: "veo-3.0-generate-001",
+    let image: { imageBytes: string; mimeType: string } | undefined;
+
+    // Upload de imagem vindo via File/Blob
+    if (isBlob(imageFile)) {
+      const buf = Buffer.from(await imageFile.arrayBuffer());
+      image = { imageBytes: buf.toString("base64"), mimeType: imageFile.type || "image/png" };
+    }
+    // Imagem enviada via base64 string
+    else if (imageBase64) {
+      const cleaned = imageBase64.includes(",")
+        ? imageBase64.split(",")[1]
+        : imageBase64;
+      image = { imageBytes: cleaned, mimeType: imageMimeType || "image/png" };
+    }
+
+    // 🔥 Chamada da API VEO
+    const operation = await ai.models.generateVideos({
+      model,
       prompt,
+      ...(image ? { image } : {}),
       config: {
-        aspectRatio: "9:16",
-        ...(duration ? { duration } : {})
+        negativePrompt,
+        ...(aspectRatio ? { aspectRatio } : {})
       }
     });
 
-    const opName = operation?.name;
-    if (!opName) {
-      return NextResponse.json(
-        { error: "Operation did not return a name" },
-        { status: 500 }
-      );
-    }
+    const name = (operation as unknown as { name?: string }).name;
 
-    // --- POLLING USANDO OPERATIONS.GETVIDEOOPERATION (API NOVA) ---
-    let tries = 0;
-    const maxTries = 60; // 60 * 5s = 5 minutos
-
-    // a tipagem nova geralmente usa um objeto com { name: string }
-    // mas o erro anterior era justamente porque passava a prop errada.
-    let result = await client.operations.getVideosOperation({ name: opName });
-
-    while (!result.done && tries < maxTries) {
-      await new Promise((r) => setTimeout(r, 5000));
-      result = await client.operations.getVideosOperation({ name: opName });
-      tries++;
-    }
-
-    if (!result.done) {
-      return NextResponse.json(
-        { error: "Video generation timeout" },
-        { status: 504 }
-      );
-    }
-
-    if (result.error) {
-      return NextResponse.json(
-        { error: result.error.message ?? "Unknown generation error" },
-        { status: 500 }
-      );
-    }
-
-    // SDK novo costuma devolver algo como:
-    // result.response.generatedVideos[0].video.uri
-    const videoUri =
-      result.response?.generatedVideos?.[0]?.video?.uri ?? null;
-
-    if (!videoUri) {
-      return NextResponse.json(
-        { error: "No video URI returned" },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({ uri: videoUri });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("VEO API ERROR:", message);
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ name });
+  } catch (error: unknown) {
+    console.error("Error starting Veo generation:", error);
+    return NextResponse.json(
+      { error: "Failed to start generation" },
+      { status: 500 }
+    );
   }
 }
