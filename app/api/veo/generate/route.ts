@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       model: "veo-3.0-generate-001",
       prompt,
       config: {
-        aspectRatio: "9:16", // story format
+        aspectRatio: "9:16", // formato story
         ...(duration ? { duration } : {})
       }
     });
@@ -48,15 +48,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // POLLING UNTIL DONE
-    let result = await client.operations.getVideosOperation(opName);
+    // POLLING — AGORA COM O FORMATO CORRETO
+    let result = await client.operations.getVideosOperation({ name: opName });
 
     let tries = 0;
-    const max = 60; // 60 × 5s = 5 min
+    const max = 60; // 5 min
 
     while (!result.done && tries < max) {
       await new Promise((r) => setTimeout(r, 5000));
-      result = await client.operations.getVideosOperation(opName);
+      result = await client.operations.getVideosOperation({ name: opName });
       tries++;
     }
 
@@ -69,7 +69,9 @@ export async function POST(req: NextRequest) {
 
     if (result.error) {
       return NextResponse.json(
-        { error: result.error.message ?? "Unknown generation error" },
+        {
+          error: result.error.message ?? "Unknown generation error",
+        },
         { status: 500 }
       );
     }
