@@ -1,106 +1,92 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
-if (!process.env.GEMINI_API_KEY) {
-  throw new Error("GEMINI_API_KEY environment variable is not set.");
+const apiKey = process.env.GEMINI_API_KEY;
+
+if (!apiKey) {
+  throw new Error("GEMINI_API_KEY is not set in environment variables.");
 }
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-});
+const client = new GoogleGenAI({ apiKey });
 
-// ✅ Type predicate válido: File é subtipo de FormDataEntryValue
-function isFileValue(value: FormDataEntryValue | null): value is File {
-  return typeof value === "object" && value instanceof File;
-}
+export const runtime = "nodejs"; // ou "edge", se o projeto original usar edge
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const contentType = req.headers.get("content-type") || "";
+    const body = await req.json();
+    const prompt: string | undefined = body?.prompt;
+    const duration: number | undefined = body?.duration;
 
-    if (!contentType.includes("multipart/form-data")) {
+    if (!prompt || typeof prompt !== "string") {
       return NextResponse.json(
-        { error: "Expected multipart/form-data" },
+        { error: "Missing or invalid 'prompt' in request body." },
         { status: 400 }
       );
     }
 
-    const form = await req.formData();
-
-    const userPrompt = (form.get("prompt") as string) || "";
-    const model =
-      (form.get("model") as string) || "veo-3.0-nano-001"; // ou o modelo que você estiver usando
-
-    const durationStr = form.get("duration") as string | null;
-    const duration = durationStr ? Number(durationStr) : undefined;
-
-    const imageFileValue = form.get("imageFile");
-    const imageBase64 = (form.get("imageBase64") as string) || "";
-    const imageMimeType =
-      (form.get("imageMimeType") as string) || "image/png";
-
-    if (!userPrompt) {
-      return NextResponse.json(
-        { error: "Missing prompt" },
-        { status: 400 }
-      );
-    }
-
-    let image:
-      | {
-          imageBytes: string;
-          mimeType: string;
-        }
-      | undefined;
-
-    // ✅ Se veio arquivo via formData (File)
-    if (isFileValue(imageFileValue)) {
-      const buffer = Buffer.from(await imageFileValue.arrayBuffer());
-      image = {
-        imageBytes: buffer.toString("base64"),
-        mimeType: imageFileValue.type || "image/png",
-      };
-    }
-    // ✅ Se veio base64 direto (por exemplo, da tua UI)
-    else if (imageBase64) {
-      const cleaned = imageBase64.includes(",")
-        ? imageBase64.split(",")[1]
-        : imageBase64;
-
-      image = {
-        imageBytes: cleaned,
-        mimeType: imageMimeType,
-      };
-    }
-
-    // 🔥 Prompt forçando: 9:16, sem texto, alta qualidade
-    const finalPrompt = `
-Gere um vídeo em ALTA QUALIDADE, no formato vertical 9:16 (story).
-NÃO coloque nenhum texto, palavra, legenda ou escrita na tela.
-Estilo cinematográfico, movimento suave, boa iluminação e muitos detalhes.
-Cena: ${userPrompt}
-`.trim();
-
-    const operation = await ai.models.generateVideos({
-      model,
-      prompt: finalPrompt,
-      ...(image ? { image } : {}),
+    // Chamada ao Veo / geração de vídeo
+    const operation = await client.models.generateVideos({
+      model: "veo-2.0-generate-001", // ou o modelo que estás a usar
+      prompt,
       config: {
         aspectRatio: "9:16",
-        detail: "high",
+        // ❌ REMOVIDO: quality
+        // ❌ REMOVIDO: detail
+        // Estes abaixo são aceites no teu tipo GenerateVideosConfig
         motion: "cinematic",
         frameRate: 30,
         ...(duration ? { duration } : {}),
       },
     });
 
-    const name = (operation as unknown as { name?: string }).name;
+    if (!operation.name) {
+      return NextResponse.json(
+        { error: "Video generation operation did not return a name." },
+        { status: 500 }
+      );
+    }
 
-    return NextResponse.json({ name });
-  } catch (error) {
-    console.error("Error starting Veo generation:", error);
+    // Polling simples até terminar a operação
+    let doneOp = operation;
+
+    // Limite básico para não ficar em loop infinito
+    for (let i = 0; i < 60 && !doneOp.done; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      doneOp = await client.operations.getVideosOperation({
+        operation: operation.name,
+      });
+    }
+
+    if (!doneOp.done) {
+      return NextResponse.json(
+        { error: "Video generation did not complete in time." },
+        { status: 504 }
+      );
+    }
+
+    if (doneOp.error) {
+      return NextResponse.json(
+        { error: doneOp.error.message ?? "Unknown error from Veo" },
+        { status: 500 }
+      );
+    }
+
+    const videoUri =
+      doneOp.response?.generatedVideos?.[0]?.video?.uri ?? null;
+
+    if (!videoUri) {
+      return NextResponse.json(
+        { error: "Generated video URI not found in response." },
+        { status: 500 }
+      );
+    }
+
+    // Devolve só o URI do vídeo (podes adaptar para devolver mais coisas)
+    return NextResponse.json({ uri: videoUri });
+  } catch (err: any) {
+    console.error("Error in /api/veo/generate:", err);
     return NextResponse.json(
-      { error: "Failed to start generation" },
+      { error: err?.message ?? "Internal server error." },
       { status: 500 }
     );
   }
