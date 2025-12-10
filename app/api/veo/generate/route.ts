@@ -87,7 +87,6 @@ Cena: ${userPrompt}
       ...(image ? { image } : {}),
       config: {
         aspectRatio: "9:16",
-        quality: "high",
         detail: "high",
         motion: "cinematic",
         frameRate: 30,
