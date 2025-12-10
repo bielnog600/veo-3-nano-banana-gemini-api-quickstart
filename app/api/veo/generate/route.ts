@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-  throw new Error("GEMINI_API_KEY is not set.");
-}
-
 export const runtime = "nodejs";
+
+const apiKey = process.env.GEMINI_API_KEY;
+if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
 
 const client = new GoogleGenAI({ apiKey });
 
@@ -23,13 +21,10 @@ export async function POST(req: NextRequest) {
     const duration = body.duration;
 
     if (!prompt) {
-      return NextResponse.json(
-        { error: "Missing prompt" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
 
-    // INICIA A GERAÇÃO DE VÍDEO
+    // START VIDEO GENERATION
     const operation = await client.models.generateVideos({
       model: "veo-3.0-generate-001",
       prompt,
@@ -42,20 +37,20 @@ export async function POST(req: NextRequest) {
     const opName = operation?.name;
     if (!opName) {
       return NextResponse.json(
-        { error: "No operation name returned" },
+        { error: "Operation did not return a name" },
         { status: 500 }
       );
     }
 
-    // POLLING → SDK ATUAL: operations.get(name: string)
-    let result = await client.operations.get(opName);
+    // POLLING CORRETO DO SDK
+    let result = await client.operations.getVideosOperation({ name: opName });
 
     let tries = 0;
-    const maxTries = 60; // 60 * 5s = ~5 minutos
+    const maxTries = 60; // 5 minutos
 
     while (!result.done && tries < maxTries) {
       await new Promise((r) => setTimeout(r, 5000));
-      result = await client.operations.get(opName);
+      result = await client.operations.getVideosOperation({ name: opName });
       tries++;
     }
 
@@ -85,14 +80,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ uri: videoUri });
   } catch (err: unknown) {
-    console.error("VEO API ERROR:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("VEO API ERROR:", message);
 
-    const message =
-      err instanceof Error ? err.message : "Unknown error";
-
-    return NextResponse.json(
-      { error: message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
