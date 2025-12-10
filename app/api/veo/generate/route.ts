@@ -4,7 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 const apiKey = process.env.GEMINI_API_KEY;
 
 if (!apiKey) {
-  throw new Error("GEMINI_API_KEY is not set in environment variables.");
+  throw new Error("GEMINI_API_KEY is not set.");
 }
 
 const client = new GoogleGenAI({ apiKey });
@@ -30,13 +30,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // START VIDEO GENERATION
     const operation = await client.models.generateVideos({
       model: "veo-3.0-generate-001",
       prompt,
       config: {
-        aspectRatio: "9:16", // formato story
-        ...(duration ? { duration } : {}),
-      },
+        aspectRatio: "9:16", // story format
+        ...(duration ? { duration } : {})
+      }
     });
 
     const opName = operation?.name;
@@ -47,16 +48,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Poll da operação até terminar
-    let result = await client.operations.getVideosOperation({ operation: opName });
+    // POLLING UNTIL DONE
+    let result = await client.operations.getVideosOperation(opName);
 
-    let attempts = 0;
-    const maxAttempts = 60; // ~5 minutos se 5s cada
+    let tries = 0;
+    const max = 60; // 60 × 5s = 5 min
 
-    while (!result.done && attempts < maxAttempts) {
-      await new Promise((res) => setTimeout(res, 5000));
-      result = await client.operations.getVideosOperation({ operation: opName });
-      attempts += 1;
+    while (!result.done && tries < max) {
+      await new Promise((r) => setTimeout(r, 5000));
+      result = await client.operations.getVideosOperation(opName);
+      tries++;
     }
 
     if (!result.done) {
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
 
     if (result.error) {
       return NextResponse.json(
-        { error: result.error.message ?? "Unknown error" },
+        { error: result.error.message ?? "Unknown generation error" },
         { status: 500 }
       );
     }
@@ -84,8 +85,8 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ uri: videoUri });
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Unknown error";
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
     console.error("VEO API ERROR:", message);
     return NextResponse.json(
       { error: message },
