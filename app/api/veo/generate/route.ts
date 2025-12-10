@@ -12,7 +12,6 @@ type ImagePayload = {
   mimeType: string;
 };
 
-// Type guard: checa se é um "File" sem usar `instanceof File`
 function isFileLike(value: FormDataEntryValue | null): value is File {
   return (
     typeof value === "object" &&
@@ -37,7 +36,6 @@ export async function POST(req: Request) {
     const promptValue = form.get("prompt");
     const modelValue = form.get("model");
     const negativePromptValue = form.get("negativePrompt");
-    const aspectRatioValue = form.get("aspectRatio");
     const imageFileValue = form.get("imageFile");
     const imageBase64Value = form.get("imageBase64");
     const imageMimeTypeValue = form.get("imageMimeType");
@@ -53,11 +51,6 @@ export async function POST(req: Request) {
       typeof negativePromptValue === "string" &&
       negativePromptValue.length > 0
         ? negativePromptValue
-        : undefined;
-
-    const aspectRatio =
-      typeof aspectRatioValue === "string" && aspectRatioValue.length > 0
-        ? aspectRatioValue
         : undefined;
 
     const imageBase64 =
@@ -78,7 +71,6 @@ export async function POST(req: Request) {
 
     let image: ImagePayload | undefined;
 
-    // Upload de imagem (sem `instanceof File`)
     if (isFileLike(imageFileValue)) {
       const buf = await imageFileValue.arrayBuffer();
       const b64 = Buffer.from(buf).toString("base64");
@@ -98,12 +90,13 @@ export async function POST(req: Request) {
       };
     }
 
+    // ====== FORÇAR STORY (9:16) ======
     const operation = await ai.models.generateVideos({
       model,
       prompt,
       ...(image ? { image } : {}),
       config: {
-        ...(aspectRatio ? { aspectRatio } : {}),
+        aspectRatio: "9:16",              // <-- Aqui: Sempre Story
         ...(negativePrompt ? { negativePrompt } : {}),
       },
     });
